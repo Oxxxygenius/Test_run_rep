@@ -211,6 +211,7 @@ class Project(Base):
     general_contractor = Column(String)  # Генподрядчик
     developer = Column(String)  # Застройщик
     package_format = Column(String, default="unified")  # Формат комплекта ИД: "repeated" или "unified"
+    custom_templates = Column(JSON)  # Пользовательские шаблоны для АОСР и реестров
     created_at = Column(DateTime, default=datetime.utcnow)
     created_by = Column(Integer, ForeignKey("users.id"))
 

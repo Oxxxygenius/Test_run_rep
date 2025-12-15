@@ -53,6 +53,7 @@ CREATE TABLE projects (
     general_contractor VARCHAR(255),  -- Генподрядчик
     developer VARCHAR(255),  -- Застройщик
     package_format VARCHAR(20) DEFAULT 'unified',  -- Формат комплекта ИД: 'repeated' или 'unified'
+    custom_templates JSONB,  -- Пользовательские шаблоны для АОСР и реестров
     status VARCHAR(50) DEFAULT 'active', -- active, completed, archived
     created_by INTEGER REFERENCES users(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -210,6 +211,7 @@ class Project(Base):
     general_contractor = Column(String(255))  # Генподрядчик
     developer = Column(String(255))  # Застройщик
     package_format = Column(String(20), default='unified')  # Формат комплекта ИД: 'repeated' или 'unified'
+    custom_templates = Column(JSON)  # Пользовательские шаблоны для АОСР и реестров
     status = Column(String(50), default='active')
     created_by = Column(Integer, ForeignKey('users.id'))
     created_at = Column(DateTime, default=datetime.utcnow)

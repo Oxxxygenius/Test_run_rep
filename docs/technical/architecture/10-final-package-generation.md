@@ -209,6 +209,167 @@ project.package_format = PackageFormat.UNIFIED_DOCS  # или REPEATED_DOCS
 
 ## 🔄 Workflow генерации комплекта
 
+### Этап 0: Выбор шаблонов
+
+**ВАЖНО:** Перед началом генерации финального комплекта платформа запрашивает у пользователя выбор шаблонов для всех документов.
+
+#### Какие шаблоны нужны:
+
+1. **Шаблон общего реестра исполнительной документации**
+   - Файл по умолчанию: `docs/technical/info/04_Шаблоны_Формы/04_Шаблон общего реестра.xlsx`
+
+2. **Шаблон реестра документов качества к АОСР**
+   - Файл по умолчанию: `docs/technical/info/04_Шаблоны_Формы/04_Шаблон реестра к АОСР.xlsx`
+
+3. **Шаблон формы АОСР**
+   - Файл по умолчанию: `docs/technical/info/04_Шаблоны_Формы/04_Форма АОСР.xlsx`
+
+#### Пользовательский выбор:
+
+```python
+from pydantic import BaseModel
+from typing import Optional
+
+class TemplateSelectionRequest(BaseModel):
+    """Запрос на выбор шаблонов для генерации комплекта"""
+
+    # Можно использовать стандартные шаблоны
+    use_default_templates: bool = True
+
+    # Или загрузить свои под конкретный объект
+    custom_general_registry_template: Optional[str] = None  # Путь к загруженному файлу
+    custom_quality_registry_template: Optional[str] = None  # Путь к загруженному файлу
+    custom_aosr_form_template: Optional[str] = None  # Путь к загруженному файлу
+
+
+@router.post("/projects/{project_id}/select-templates")
+async def select_templates(
+    project_id: int,
+    templates: TemplateSelectionRequest,
+    files: Optional[List[UploadFile]] = None
+) -> dict:
+    """
+    Выбор шаблонов для генерации финального комплекта
+
+    Пользователь может:
+    1. Использовать стандартные шаблоны (use_default_templates=True)
+    2. Загрузить свои шаблоны для конкретного объекта (files)
+
+    Шаблоны сохраняются в storage/projects/{project_id}/templates/
+    """
+    from app.models import Project
+    from app.database import get_db
+    import shutil
+
+    db = get_db()
+    project = db.query(Project).filter(Project.id == project_id).first()
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Проект не найден")
+
+    template_dir = f"storage/projects/{project_id}/templates"
+    os.makedirs(template_dir, exist_ok=True)
+
+    if templates.use_default_templates:
+        # Копируем стандартные шаблоны в папку проекта
+        default_templates = {
+            'general_registry': 'docs/technical/info/04_Шаблоны_Формы/04_Шаблон общего реестра.xlsx',
+            'quality_registry': 'docs/technical/info/04_Шаблоны_Формы/04_Шаблон реестра к АОСР.xlsx',
+            'aosr_form': 'docs/technical/info/04_Шаблоны_Формы/04_Форма АОСР.xlsx'
+        }
+
+        for template_type, source_path in default_templates.items():
+            if os.path.exists(source_path):
+                dest_path = os.path.join(template_dir, os.path.basename(source_path))
+                shutil.copy(source_path, dest_path)
+
+        return {
+            "status": "success",
+            "message": "Стандартные шаблоны успешно выбраны",
+            "templates": default_templates
+        }
+
+    else:
+        # Загрузка пользовательских шаблонов
+        if not files or len(files) != 3:
+            raise HTTPException(
+                status_code=400,
+                detail="Необходимо загрузить 3 шаблона: общий реестр, реестр ДК, форма АОСР"
+            )
+
+        uploaded_templates = {}
+        template_names = ['general_registry', 'quality_registry', 'aosr_form']
+
+        for idx, file in enumerate(files):
+            file_path = os.path.join(template_dir, f"{template_names[idx]}_{file.filename}")
+
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
+            uploaded_templates[template_names[idx]] = file_path
+
+        # Сохраняем пути к шаблонам в базе данных
+        project.custom_templates = uploaded_templates
+        db.commit()
+
+        return {
+            "status": "success",
+            "message": "Пользовательские шаблоны успешно загружены",
+            "templates": uploaded_templates
+        }
+
+
+def get_project_templates(project_id: int) -> dict:
+    """
+    Получает пути к шаблонам для проекта
+
+    Возвращает либо пользовательские шаблоны, либо стандартные
+    """
+    from app.models import Project
+    from app.database import get_db
+
+    db = get_db()
+    project = db.query(Project).filter(Project.id == project_id).first()
+
+    # Если у проекта есть пользовательские шаблоны
+    if project.custom_templates:
+        return project.custom_templates
+
+    # Иначе используем стандартные
+    template_dir = f"storage/projects/{project_id}/templates"
+
+    return {
+        'general_registry': os.path.join(template_dir, '04_Шаблон общего реестра.xlsx'),
+        'quality_registry': os.path.join(template_dir, '04_Шаблон реестра к АОСР.xlsx'),
+        'aosr_form': os.path.join(template_dir, '04_Форма АОСР.xlsx')
+    }
+```
+
+#### UI Flow:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Генерация финального комплекта ИД                  │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  Выберите шаблоны для генерации документов:         │
+│                                                     │
+│  ○ Использовать стандартные шаблоны                 │
+│     ├─ 04_Шаблон общего реестра.xlsx                │
+│     ├─ 04_Шаблон реестра к АОСР.xlsx                │
+│     └─ 04_Форма АОСР.xlsx                           │
+│                                                     │
+│  ○ Загрузить свои шаблоны под этот объект           │
+│     ├─ [Загрузить общий реестр]  📎                 │
+│     ├─ [Загрузить реестр ДК]     📎                 │
+│     └─ [Загрузить форму АОСР]    📎                 │
+│                                                     │
+│  [Отмена]              [Продолжить генерацию] ➔     │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
 ### Этап 1: Сбор метаданных
 
 ```python
@@ -475,6 +636,8 @@ def collect_project_documents(project_id: int, package_format: PackageFormat) ->
 
 ### Этап 2: Генерация реестра исполнительной документации
 
+**ВАЖНО:** Использует шаблон, выбранный пользователем на Этапе 0
+
 ```python
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -589,6 +752,7 @@ def generate_registry_pdf(
 
 
 def generate_registry_excel(
+    project_id: int,
     project_info: Dict,
     all_metadata: List[DocumentMetadata],
     output_path: str
@@ -596,9 +760,10 @@ def generate_registry_excel(
     """
     Генерирует реестр в формате Excel на основе шаблона
 
-    Использует шаблон: docs/technical/info/04_Шаблоны_Формы/04_Шаблон общего реестра.xlsx
+    Использует шаблон, выбранный пользователем на Этапе 0
 
     Args:
+        project_id: ID проекта (для получения выбранного шаблона)
         project_info: Информация о проекте (название, адрес, участники)
         all_metadata: Список метаданных всех документов
         output_path: Путь для сохранения Excel файла
@@ -609,8 +774,9 @@ def generate_registry_excel(
     import openpyxl
     from openpyxl.styles import Font, Alignment, Border, Side
 
-    # Загружаем шаблон
-    template_path = "docs/technical/info/04_Шаблоны_Формы/04_Шаблон общего реестра.xlsx"
+    # Получаем выбранный пользователем шаблон
+    templates = get_project_templates(project_id)
+    template_path = templates['general_registry']
 
     if os.path.exists(template_path):
         # Используем шаблон
@@ -1158,15 +1324,20 @@ def create_editable_archive(
     return output_zip_path
 
 
-def generate_quality_docs_registry_excel(package: AOSRPackage, output_path: str) -> str:
+def generate_quality_docs_registry_excel(
+    project_id: int,
+    package: AOSRPackage,
+    output_path: str
+) -> str:
     """
     Генерирует реестр документов качества к АОСР в формате Excel на основе шаблона
 
-    Использует шаблон: docs/technical/info/04_Шаблоны_Формы/04_Шаблон реестра к АОСР.xlsx
+    Использует шаблон, выбранный пользователем на Этапе 0
 
     Используется когда к АОСР прикладывается более 3-х документов
 
     Args:
+        project_id: ID проекта (для получения выбранного шаблона)
         package: Пакет документов АОСР
         output_path: Путь для сохранения Excel файла
 
@@ -1176,8 +1347,9 @@ def generate_quality_docs_registry_excel(package: AOSRPackage, output_path: str)
     import openpyxl
     from openpyxl.styles import Font, Alignment, Border, Side
 
-    # Загружаем шаблон
-    template_path = "docs/technical/info/04_Шаблоны_Формы/04_Шаблон реестра к АОСР.xlsx"
+    # Получаем выбранный пользователем шаблон
+    templates = get_project_templates(project_id)
+    template_path = templates['quality_registry']
 
     if os.path.exists(template_path):
         # Используем шаблон
@@ -1257,16 +1429,27 @@ def generate_quality_docs_registry_excel(package: AOSRPackage, output_path: str)
     return output_path
 
 
-def generate_aosr_excel(package: AOSRPackage, output_path: str) -> str:
+def generate_aosr_excel(
+    project_id: int,
+    package: AOSRPackage,
+    output_path: str
+) -> str:
     """
     Генерирует АОСР в формате Excel (редактируемый)
-    На основе шаблона из info/04_Форма АОСР.xlsx
+
+    Использует шаблон, выбранный пользователем на Этапе 0
+
+    Args:
+        project_id: ID проекта (для получения выбранного шаблона)
+        package: Пакет документов АОСР
+        output_path: Путь для сохранения Excel файла
     """
     import openpyxl
     from openpyxl.styles import Font, Alignment, Border, Side
 
-    # Загружаем шаблон АОСР
-    template_path = "docs/technical/info/04_Форма АОСР.xlsx"
+    # Получаем выбранный пользователем шаблон
+    templates = get_project_templates(project_id)
+    template_path = templates['aosr_form']
 
     if os.path.exists(template_path):
         wb = openpyxl.load_workbook(template_path)
@@ -1282,17 +1465,11 @@ def generate_aosr_excel(package: AOSRPackage, output_path: str) -> str:
         # ... заполнение других полей
 
     else:
-        # Если шаблона нет, создаём простую таблицу
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = f"АОСР {package.aosr_number}"
-
-        ws['A1'] = "АКТ ОСВИДЕТЕЛЬСТВОВАНИЯ СКРЫТЫХ РАБОТ"
-        ws['A1'].font = Font(bold=True, size=14)
-
-        ws['A3'] = f"№ {package.aosr_number}"
-        ws['A4'] = f"Дата: {package.aosr_date.strftime('%d.%m.%Y')}"
-        ws['A6'] = f"Наименование работ: {package.work_description}"
+        # Если шаблона нет - запрашиваем у пользователя
+        raise FileNotFoundError(
+            f"Шаблон формы АОСР не найден: {template_path}\n"
+            "Пожалуйста, загрузите шаблон АОСР или используйте стандартный шаблон из папки 04_Шаблоны_Формы"
+        )
 
     wb.save(output_path)
     return output_path
