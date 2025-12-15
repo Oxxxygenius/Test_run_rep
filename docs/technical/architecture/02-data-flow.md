@@ -446,95 +446,222 @@ if result['matches'] and result['confidence'] > 0.8:
 
 ### Этап 6: Формирование финального комплекта
 
+**ВАЖНО:** Полное описание этого этапа в [10-final-package-generation.md](10-final-package-generation.md)
+
 **Вход:**
 ```python
 project_id = 123
 ```
 
-**Сбор всех файлов:**
+**Шаг 6.1: Сбор метаданных с расчётом страниц**
+
 ```python
-# Получаем все АОСР проекта
-aosr_list = db.query(AOSR).filter(AOSR.project_id == 123).all()
+from dataclasses import dataclass
+from typing import List
 
-# Получаем все связанные документы
-all_files = []
+@dataclass
+class DocumentMetadata:
+    number: int          # № п/п в реестре
+    name: str           # "АОСР 01-КЖ6-1"
+    content: str        # "Разработка грунта"
+    doc_number: str     # "01-КЖ6-1"
+    doc_date: date      # 2024-06-07
+    page_count: int     # 2
+    start_page: int     # 5 (страница начала в итоговом PDF)
 
+# Собираем все документы с метаданными
+all_metadata = []
+current_page = 1  # Начинаем отсчёт
+
+# Титульный лист (1 страница)
+current_page += 1
+
+# Реестр (2-3 страницы, зависит от количества документов)
+registry_pages = calculate_registry_pages(project_id)
+current_page += registry_pages
+
+# Для каждого АОСР
 for aosr in aosr_list:
-    # АОСР PDF
-    all_files.append({
-        'type': 'aosr',
-        'path': aosr.generated_pdf_path,
-        'title': f"АОСР №{aosr.number}"
-    })
+    # АОСР
+    aosr_pdf = download_from_storage(aosr.generated_pdf_path)
+    aosr_page_count = get_pdf_page_count(aosr_pdf)
+
+    all_metadata.append(DocumentMetadata(
+        number=len(all_metadata) + 1,
+        name=f"АОСР {aosr.number}",
+        content=aosr.work_description,
+        doc_number=aosr.number,
+        doc_date=aosr.work_date,
+        page_count=aosr_page_count,
+        start_page=current_page
+    ))
+    current_page += aosr_page_count
 
     # Исполнительная схема
     if aosr.schema_document_id:
-        schema = db.query(Document).filter(Document.id == aosr.schema_document_id).first()
-        all_files.append({
-            'type': 'schema',
-            'path': schema.file_path,
-            'title': f"Исполнительная схема к АОСР №{aosr.number}"
-        })
+        schema_pdf = download_from_storage(schema.file_path)
+        schema_page_count = get_pdf_page_count(schema_pdf)
+
+        all_metadata.append(DocumentMetadata(
+            number=len(all_metadata) + 1,
+            name=f"Исполнительная схема {aosr.number}",
+            content="Приложение №1",
+            doc_number=aosr.number,
+            doc_date=aosr.work_date,
+            page_count=schema_page_count,
+            start_page=current_page
+        ))
+        current_page += schema_page_count
 
     # Документы качества
-    quality_docs = db.query(AOSRQualityDocument).filter(
-        AOSRQualityDocument.aosr_id == aosr.id
-    ).all()
-
     for qd in quality_docs:
-        doc = db.query(Document).filter(Document.id == qd.document_id).first()
-        all_files.append({
-            'type': 'quality_doc',
-            'path': doc.file_path,
-            'title': f"{doc.doc_type} - {doc.filename}"
-        })
+        doc_pdf = download_from_storage(doc.file_path)
+        doc_page_count = get_pdf_page_count(doc_pdf)
+
+        all_metadata.append(DocumentMetadata(
+            number=len(all_metadata) + 1,
+            name=doc.doc_type,
+            content=doc.metadata.get('material_name', ''),
+            doc_number=doc.metadata.get('cert_number', ''),
+            doc_date=doc.metadata.get('issue_date'),
+            page_count=doc_page_count,
+            start_page=current_page
+        ))
+        current_page += doc_page_count
 ```
 
-**Объединение в один PDF:**
+**Шаг 6.2: Генерация реестра с точными номерами страниц**
+
 ```python
-from PyPDF2 import PdfMerger
+def generate_registry_pdf(project_info: Dict, all_metadata: List[DocumentMetadata], output_path: str):
+    """
+    Генерирует реестр исполнительной документации
 
-def create_final_package(files, output_path):
-    merger = PdfMerger()
+    Таблица реестра:
+    ┌────┬──────────────────┬──────────────┬────────────┬──────────┬──────────┬──────────┐
+    │№п/п│  Наименование    │  Содержание  │№ документа │   Дата   │Кол-во л. │Страница  │
+    ├────┼──────────────────┼──────────────┼────────────┼──────────┼──────────┼──────────┤
+    │ 1  │АОСР 01-КЖ6-1    │Разработка    │01-КЖ6-1    │07.06.2024│    2     │    5     │
+    │    │                  │грунта        │            │          │          │          │
+    ├────┼──────────────────┼──────────────┼────────────┼──────────┼──────────┼──────────┤
+    │ 2  │Исполнительная    │Приложение №1 │01-КЖ6-1    │07.06.2024│    1     │    7     │
+    │    │схема 01-КЖ6-1    │              │            │          │          │          │
+    └────┴──────────────────┴──────────────┴────────────┴──────────┴──────────┴──────────┘
+    """
+    from reportlab.pdfgen import canvas
 
-    # Добавляем титульный лист
-    merger.append(generate_title_page())
+    c = canvas.Canvas(output_path, pagesize=A4)
 
-    # Добавляем общий реестр
-    merger.append(generate_general_registry(files))
+    # Заголовок реестра
+    c.setFont("DejaVuBold", 14)
+    c.drawCentredString(width/2, height - 30*mm, "РЕЕСТР ИСПОЛНИТЕЛЬНОЙ ДОКУМЕНТАЦИИ")
 
-    # Добавляем все файлы по порядку
-    for file in files:
-        # Скачиваем из Object Storage
-        local_path = download_from_storage(file['path'])
+    # Информация о проекте
+    # ... (код генерации заголовка)
 
-        # Добавляем в итоговый PDF
-        merger.append(local_path)
+    # Таблица с данными
+    for doc_meta in all_metadata:
+        # Рисуем строку таблицы
+        draw_table_row(c, doc_meta)
 
-        # Добавляем bookmark для навигации
-        merger.add_outline_item(file['title'], len(merger.pages) - 1)
-
-    # Сохраняем
-    merger.write(output_path)
-    merger.close()
-
+    c.save()
     return output_path
 ```
 
-**Выход:**
+**Шаг 6.3: Объединение в единый PDF**
+
+```python
+from PyPDF2 import PdfMerger
+
+def create_final_package(project_id: int, output_pdf_path: str):
+    merger = PdfMerger()
+
+    # 1. Титульный лист
+    title_pdf = generate_title_page(project_info)
+    merger.append(title_pdf)
+
+    # 2. Общий реестр (с правильными номерами страниц)
+    registry_pdf = generate_registry_pdf(project_info, all_metadata)
+    merger.append(registry_pdf)
+
+    # 3. Все документы в порядке реестра
+    for doc_meta in all_metadata:
+        pdf_path = get_pdf_by_metadata(doc_meta)
+        merger.append(pdf_path)
+
+    # 4. Сохранение
+    merger.write(output_pdf_path)
+    merger.close()
+
+    return output_pdf_path
 ```
-Файл: ИД_ЖК_Солнечный_Полный_комплект.pdf
-Размер: 45 MB
-Страниц: 250
-Структура:
-  ├─ Титульный лист
-  ├─ Общий реестр
-  ├─ АОСР №1
-  ├─ Исполнительная схема к АОСР №1
-  ├─ Сертификат на трубу ПНД
-  ├─ Паспорт качества
-  ├─ АОСР №2
-  └─ ...
+
+**Шаг 6.4: Создание архива с редактируемыми файлами**
+
+```python
+import zipfile
+import openpyxl
+
+def create_editable_archive(project_id: int, output_zip_path: str):
+    """
+    Создаёт ZIP архив со структурой:
+    ├── 1. Исполнительная документация в формате PDF/
+    ├── 2. Исполнительная документация в формате Excel/
+    │   ├── Общий реестр.xlsx
+    │   └── АОСР №1.xlsx, АОСР №2.xlsx, ...
+    ├── 4. Геодезические схемы в формате DWG/
+    └── 5. Паспорта, сертификаты и лабораторные заключения/
+    """
+    with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+
+        # Папка 1: PDF файлы
+        for aosr in aosr_list:
+            zipf.write(aosr.pdf_path, f"1. Исполнительная документация в формате PDF/АОСР {aosr.number}.pdf")
+
+        # Папка 2: Excel файлы
+        # Генерируем реестр в Excel
+        registry_excel = generate_registry_excel(project_info, all_metadata)
+        zipf.write(registry_excel, "2. Исполнительная документация в формате Excel/Общий реестр.xlsx")
+
+        # Генерируем АОСР в Excel (из шаблона)
+        for aosr in aosr_list:
+            aosr_excel = generate_aosr_excel(aosr)
+            zipf.write(aosr_excel, f"2. Исполнительная документация в формате Excel/АОСР {aosr.number}.xlsx")
+
+        # Папка 5: Документы качества
+        for doc in quality_docs:
+            zipf.write(doc.file_path, f"5. Паспорта, сертификаты и лабораторные заключения/{doc.filename}")
+
+    return output_zip_path
+```
+
+**Выход:**
+
+```json
+{
+  "pdf": {
+    "path": "storage/projects/123/final_package.pdf",
+    "size_mb": 45,
+    "pages": 250,
+    "structure": {
+      "title_page": 1,
+      "registry": "2-4",
+      "aosr_count": 8,
+      "schema_count": 8,
+      "quality_docs_count": 24
+    }
+  },
+  "zip": {
+    "path": "storage/projects/123/final_archive.zip",
+    "size_mb": 30,
+    "structure": {
+      "pdf_folder": "1. Исполнительная документация в формате PDF/",
+      "excel_folder": "2. Исполнительная документация в формате Excel/",
+      "dwg_folder": "4. Геодезические схемы в формате DWG/",
+      "quality_folder": "5. Паспорта, сертификаты и лабораторные заключения/"
+    }
+  }
+}
 ```
 
 ---

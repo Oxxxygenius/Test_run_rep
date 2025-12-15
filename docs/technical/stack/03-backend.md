@@ -206,7 +206,13 @@ class Project(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     address = Column(String, nullable=False)
+    client = Column(String)  # Заказчик
+    contractor = Column(String)  # Подрядчик
+    general_contractor = Column(String)  # Генподрядчик
+    developer = Column(String)  # Застройщик
+    package_format = Column(String, default="unified")  # Формат комплекта ИД: "repeated" или "unified"
     created_at = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(Integer, ForeignKey("users.id"))
 
     documents = relationship("Document", back_populates="project")
     aosr_list = relationship("AOSR", back_populates="project")

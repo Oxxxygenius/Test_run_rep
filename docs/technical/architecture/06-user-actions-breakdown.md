@@ -264,6 +264,11 @@ axios.defaults.headers.common['Authorization'] = `Bearer ${data.access_token}`;
    - Адрес: г. Москва, ул. Ленина, д. 1
    - Заказчик: ООО Стройинвест
    - Подрядчик: ООО СтройПром
+   - Генподрядчик: ООО СтройГенПодряд
+   - Застройщик: ООО Девелопмент
+   - **Формат комплекта ИД**: Выбирает один из вариантов:
+     [ ] С повторением документов качества (Вариант 1)
+     [x] Со сквозной нумерацией (Вариант 2)
 3. Нажимает "Создать"
 ```
 
@@ -273,9 +278,16 @@ axios.defaults.headers.common['Authorization'] = `Bearer ${data.access_token}`;
   "name": "ЖК Солнечный, корпус 1",
   "address": "г. Москва, ул. Ленина, д. 1",
   "client": "ООО Стройинвест",
-  "contractor": "ООО СтройПром"
+  "contractor": "ООО СтройПром",
+  "general_contractor": "ООО СтройГенПодряд",
+  "developer": "ООО Девелопмент",
+  "package_format": "unified"
 }
 ```
+
+**Варианты формата комплекта ИД:**
+- `"repeated"` — Вариант 1: Документы качества повторяются для каждого АОСР
+- `"unified"` — Вариант 2: Со сквозной нумерацией, документы качества в конце
 
 #### Что происходит под капотом:
 
@@ -298,6 +310,22 @@ const createProject = async (projectData) => {
 
 **ШАГ 2: Backend создание**
 ```python
+from enum import Enum
+
+class PackageFormat(str, Enum):
+    """Формат формирования комплекта ИД"""
+    REPEATED = "repeated"  # Вариант 1: документы к каждому АОСР
+    UNIFIED = "unified"    # Вариант 2: со сквозной нумерацией
+
+class ProjectCreate(BaseModel):
+    name: str
+    address: str
+    client: str
+    contractor: str
+    general_contractor: str
+    developer: str
+    package_format: PackageFormat = PackageFormat.UNIFIED  # По умолчанию Вариант 2
+
 @router.post("/projects", response_model=ProjectResponse)
 def create_project(
     project_data: ProjectCreate,
@@ -310,6 +338,9 @@ def create_project(
         address=project_data.address,
         client=project_data.client,
         contractor=project_data.contractor,
+        general_contractor=project_data.general_contractor,
+        developer=project_data.developer,
+        package_format=project_data.package_format.value,  # Сохраняем выбранный формат
         status="active",
         created_by=current_user.id,
         created_at=datetime.utcnow()
@@ -323,7 +354,7 @@ def create_project(
     create_project_folders(new_project.id)
 
     # 3. Логируем событие
-    logger.info(f"User {current_user.id} created project {new_project.id}")
+    logger.info(f"User {current_user.id} created project {new_project.id} with package format: {project_data.package_format}")
 
     return new_project
 ```
@@ -647,6 +678,12 @@ from langchain.prompts import ChatPromptTemplate
 import json
 
 class RDAnalyzerAgent:
+    """
+    Агент анализа рабочей документации для подготовки АОСР
+
+    ВАЖНО: Анализ фокусируется на данных, необходимых для АОСР согласно регламенту:
+    docs/technical/info/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
+    """
     def __init__(self):
         self.llm = ChatOpenAI(
             model="gpt-4o",
@@ -655,31 +692,70 @@ class RDAnalyzerAgent:
         )
 
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """Ты эксперт по анализу строительной проектной документации.
+            ("system", """Ты эксперт по анализу строительной проектной документации для подготовки актов освидетельствования скрытых работ (АОСР).
 
-Задача: Проанализируй спецификацию и определи:
-1. Какие виды работ требуют оформления АОСР
-2. Список материалов для каждого вида работ
-3. Количество и единицы измерения
+ВАЖНО: Анализ выполняется согласно регламенту подготовки АОСР.
+
+ОСНОВНАЯ ЗАДАЧА:
+Извлечь из проектной документации ВСЕ данные, которые потребуются для заполнения АОСР.
+
+МАКСИМАЛЬНОЕ ВНИМАНИЕ уделяй следующим данным:
+
+1. **ВИДЫ СКРЫТЫХ РАБОТ** (те, которые требуют АОСР):
+   - Монтаж фундаментов
+   - Монтаж арматурных каркасов
+   - Прокладка трубопроводов
+   - Монтаж электропроводки в стенах/полах
+   - Устройство гидроизоляции
+   - Устройство теплоизоляции
+   - Другие работы, которые будут скрыты последующими конструкциями
+
+2. **МАТЕРИАЛЫ И ИЗДЕЛИЯ** (для таблицы в АОСР):
+   - Точное наименование материала/изделия
+   - Технические характеристики (диаметр, марка, класс прочности и т.д.)
+   - ГОСТ/ТУ (обязательно!)
+   - Количество с ТОЧНЫМИ единицами измерения (м, м², м³, шт, кг, т)
+
+3. **ДОПОЛНИТЕЛЬНЫЕ ВАЖНЫЕ ДАННЫЕ**:
+   - Номера позиций по спецификации/чертежам
+   - Осевые привязки (для указания местоположения работ)
+   - Отметки высот
+   - Номера помещений/этажей
+   - Ссылки на листы чертежей
+
+4. **ДОКУМЕНТЫ КАЧЕСТВА** (требуемые сертификаты/паспорта):
+   - Для каких материалов требуются сертификаты
+   - Для каких материалов требуются паспорта качества
+   - Для каких материалов требуются протоколы испытаний
 
 Верни результат СТРОГО в JSON формате:
 {{
   "works": [
     {{
-      "type": "Название работ",
-      "description": "Краткое описание",
+      "type": "Точное название вида работ",
+      "description": "Подробное описание работ с указанием осей/отметок/помещений",
+      "location": "Местоположение работ (оси, этаж, помещение)",
+      "drawings_references": ["№ чертежа 1", "№ чертежа 2"],
       "materials": [
         {{
-          "name": "Наименование материала",
-          "specification": "Характеристики (диаметр, марка и т.д.)",
-          "gost": "ГОСТ/ТУ (если есть)",
-          "quantity": число,
-          "unit": "единица измерения"
+          "name": "Полное наименование материала/изделия",
+          "specification": "Детальные характеристики (диаметр, толщина, марка, класс)",
+          "gost": "ГОСТ/ТУ номер (ОБЯЗАТЕЛЬНО!)",
+          "quantity": точное число,
+          "unit": "единица измерения (м, м², м³, шт, кг, т)",
+          "position_number": "№ позиции по спецификации",
+          "quality_docs_required": ["Сертификат", "Паспорт качества", "Протокол испытаний"]
         }}
-      ]
+      ],
+      "testing_required": ["Какие испытания требуются (например: гидравлические, прочностные)"],
+      "acceptance_criteria": "Критерии приёмки работ согласно СНиП/ГОСТ"
     }}
   ]
-}}"""),
+}}
+
+НЕ пропускай материалы! Извлекай ВСЕ материалы из спецификаций и ведомостей.
+Указывай ТОЧНЫЕ значения количества и единиц измерения.
+ОБЯЗАТЕЛЬНО указывай ГОСТ/ТУ для каждого материала."""),
             ("human", "ДОКУМЕНТ:\n\n{text}")
         ])
 
@@ -1166,6 +1242,18 @@ def generate_aosr(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """
+    Генерация PDF файла АОСР
+
+    ВАЖНО: Генерация выполняется согласно регламенту:
+    docs/technical/info/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
+
+    Процесс:
+    1. Валидация данных АОСР (все обязательные поля заполнены)
+    2. Обновление метаданных (дата работ, ответственные лица)
+    3. Запуск асинхронной задачи генерации PDF через Celery
+    4. Возврат task_id для отслеживания статуса
+    """
     # 1. Получаем АОСР
     aosr = db.query(AOSR).filter(AOSR.id == request.aosr_id).first()
     if not aosr:
@@ -1180,7 +1268,7 @@ def generate_aosr(
     aosr.status = 'generating'
     db.commit()
 
-    # 3. Запускаем Celery задачу генерации
+    # 3. Запускаем Celery задачу генерации (согласно регламенту)
     task = generate_aosr_pdf_task.delay(aosr.id)
 
     # 4. Создаём запись о задаче
@@ -1207,7 +1295,23 @@ def generate_aosr(
 @celery_app.task(bind=True)
 def generate_aosr_pdf_task(self, aosr_id: int):
     """
-    Генерация PDF файла АОСР
+    Асинхронная задача генерации PDF файла АОСР
+
+    ВАЖНО: Генерация выполняется согласно регламенту:
+    docs/technical/info/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
+
+    Процесс:
+    1. Извлечение данных АОСР из БД
+    2. Подготовка данных согласно структуре регламента
+    3. Генерация PDF с использованием AOSRGeneratorAgent
+    4. Загрузка PDF в Object Storage
+    5. Обновление статуса АОСР в БД
+
+    Args:
+        aosr_id: ID акта освидетельствования скрытых работ
+
+    Returns:
+        dict: {'status': 'success', 'aosr_id': int}
     """
     db = SessionLocal()
 
@@ -1216,7 +1320,7 @@ def generate_aosr_pdf_task(self, aosr_id: int):
         aosr = db.query(AOSR).filter(AOSR.id == aosr_id).first()
         project = aosr.project
 
-        # 2. Подготавливаем данные для генерации
+        # 2. Подготавливаем данные для генерации (согласно регламенту)
         data = {
             "aosr_number": f"АОСР-{aosr.id}",
             "project": {
@@ -1298,13 +1402,38 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 class AOSRGeneratorAgent:
+    """
+    Агент для генерации актов освидетельствования скрытых работ (АОСР)
+
+    ВАЖНО: При создании АОСР необходимо руководствоваться регламентом:
+    docs/technical/info/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
+
+    Регламент содержит:
+    - Обязательные поля и разделы АОСР
+    - Правила заполнения таблиц материалов
+    - Требования к подписям ответственных лиц
+    - Структуру документа согласно ГОСТ
+    """
     def __init__(self):
         # Регистрируем русский шрифт
         pdfmetrics.registerFont(TTFont('DejaVuSans', 'DejaVuSans.ttf'))
 
     def generate_pdf(self, data: dict) -> str:
         """
-        Генерирует PDF файл АОСР
+        Генерирует PDF файл АОСР согласно регламенту
+
+        Регламент: docs/technical/info/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
+
+        Args:
+            data: Словарь с данными АОСР, включающий:
+                - aosr_number: Номер акта
+                - project: Информация о проекте (name, address, client, contractor)
+                - work: Информация о работах (type, description)
+                - materials: Список материалов с их характеристиками
+                - participants: Ответственные лица
+
+        Returns:
+            str: Путь к сгенерированному PDF файлу
         """
         # 1. Создаём временный файл
         import tempfile

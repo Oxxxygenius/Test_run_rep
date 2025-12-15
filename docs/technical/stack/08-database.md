@@ -48,8 +48,11 @@ CREATE TABLE projects (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     address TEXT NOT NULL,
-    client VARCHAR(255),
-    contractor VARCHAR(255),
+    client VARCHAR(255),  -- Заказчик
+    contractor VARCHAR(255),  -- Подрядчик
+    general_contractor VARCHAR(255),  -- Генподрядчик
+    developer VARCHAR(255),  -- Застройщик
+    package_format VARCHAR(20) DEFAULT 'unified',  -- Формат комплекта ИД: 'repeated' или 'unified'
     status VARCHAR(50) DEFAULT 'active', -- active, completed, archived
     created_by INTEGER REFERENCES users(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -202,8 +205,11 @@ class Project(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     address = Column(Text, nullable=False)
-    client = Column(String(255))
-    contractor = Column(String(255))
+    client = Column(String(255))  # Заказчик
+    contractor = Column(String(255))  # Подрядчик
+    general_contractor = Column(String(255))  # Генподрядчик
+    developer = Column(String(255))  # Застройщик
+    package_format = Column(String(20), default='unified')  # Формат комплекта ИД: 'repeated' или 'unified'
     status = Column(String(50), default='active')
     created_by = Column(Integer, ForeignKey('users.id'))
     created_at = Column(DateTime, default=datetime.utcnow)

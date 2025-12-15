@@ -102,7 +102,22 @@ from reportlab.lib.units import mm
 pdfmetrics.registerFont(TTFont('DejaVu', 'DejaVuSans.ttf'))
 
 def generate_aosr_pdf(data: dict, output_path: str):
-    """Генерация PDF акта АОСР"""
+    """
+    Генерация PDF акта АОСР
+
+    ВАЖНО: Генерация выполняется согласно регламенту:
+    docs/technical/info/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
+
+    Регламент определяет:
+    - Обязательные разделы и поля АОСР
+    - Формат таблиц материалов и оборудования
+    - Требования к подписям ответственных лиц
+    - Структуру документа согласно ГОСТ
+
+    Args:
+        data: Словарь с данными АОСР (номер, дата, объект, работы, материалы)
+        output_path: Путь для сохранения PDF файла
+    """
     c = canvas.Canvas(output_path, pagesize=A4)
     width, height = A4
 
@@ -254,6 +269,31 @@ merge_pdfs([
 
 ## Генерация комплекта ИД (полный workflow)
 
+**ВАЖНО:** Детальная архитектура генерации финального комплекта описана в [architecture/10-final-package-generation.md](../architecture/10-final-package-generation.md)
+
+### Краткий обзор
+
+Генерация финального комплекта включает:
+
+1. **PDF файл** — единый документ с:
+   - Титульным листом
+   - Реестром исполнительной документации (с нумерацией страниц)
+   - Всеми АОСР
+   - Исполнительными схемами
+   - Документами качества
+
+2. **ZIP архив** со структурой:
+   ```
+   ├── 1. Исполнительная документация в формате PDF/
+   ├── 2. Исполнительная документация в формате Excel/
+   │   ├── Общий реестр.xlsx
+   │   └── АОСР №1.xlsx, АОСР №2.xlsx, ...
+   ├── 4. Геодезические схемы в формате DWG/
+   └── 5. Паспорта, сертификаты и лабораторные заключения/
+   ```
+
+### Пример кода
+
 ```python
 from typing import List
 from dataclasses import dataclass
@@ -272,11 +312,18 @@ class QualityDocument:
     doc_type: str
     material_name: str
 
-def generate_full_id_package(project_id: int, output_path: str):
+def generate_full_id_package(project_id: int, output_pdf_path: str, output_zip_path: str):
     """
     Генерация полного комплекта исполнительной документации
+
+    Возвращает:
+        dict: {
+            'pdf_path': str,  # Путь к финальному PDF
+            'zip_path': str   # Путь к архиву с редактируемыми файлами
+        }
     """
     from PyPDF2 import PdfMerger
+    import zipfile
 
     merger = PdfMerger()
     temp_files = []
@@ -287,7 +334,7 @@ def generate_full_id_package(project_id: int, output_path: str):
     merger.append(title_pdf)
     temp_files.append(title_pdf)
 
-    # 2. Общий реестр
+    # 2. Общий реестр (с правильной нумерацией страниц)
     registry_pdf = f"temp_registry_{project_id}.pdf"
     generate_main_registry(project_id, registry_pdf)
     merger.append(registry_pdf)
@@ -317,17 +364,121 @@ def generate_full_id_package(project_id: int, output_path: str):
         for doc in quality_docs:
             merger.append(doc.path)
 
-    # 4. Сохранение итогового файла
-    merger.write(output_path)
+    # 4. Сохранение итогового PDF
+    merger.write(output_pdf_path)
     merger.close()
 
-    # 5. Удаление временных файлов
+    # 5. Создание ZIP архива с редактируемыми файлами
+    create_editable_archive(project_id, aosr_list, output_zip_path)
+
+    # 6. Удаление временных файлов
     import os
     for temp_file in temp_files:
         os.remove(temp_file)
 
-    return output_path
+    return {
+        'pdf_path': output_pdf_path,
+        'zip_path': output_zip_path
+    }
+
+
+def create_editable_archive(project_id: int, aosr_list: List, output_zip_path: str):
+    """
+    Создаёт ZIP архив с редактируемыми версиями документов
+    """
+    import zipfile
+    import openpyxl
+
+    with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+
+        # Папка 1: PDF файлы
+        for aosr in aosr_list:
+            zipf.write(aosr.pdf_path, f"1. Исполнительная документация в формате PDF/АОСР {aosr.number}.pdf")
+
+        # Папка 2: Excel файлы
+        # Общий реестр
+        registry_excel = f"temp_registry_{project_id}.xlsx"
+        generate_registry_excel(project_id, registry_excel)
+        zipf.write(registry_excel, "2. Исполнительная документация в формате Excel/Общий реестр.xlsx")
+        os.remove(registry_excel)
+
+        # АОСР в Excel
+        for aosr in aosr_list:
+            aosr_excel = f"temp_aosr_{aosr.id}.xlsx"
+            generate_aosr_excel(aosr, aosr_excel)
+            zipf.write(aosr_excel, f"2. Исполнительная документация в формате Excel/АОСР {aosr.number}.xlsx")
+            os.remove(aosr_excel)
+
+        # Папка 5: Документы качества
+        for aosr in aosr_list:
+            quality_docs = get_quality_docs_for_aosr(aosr.id)
+            for i, doc in enumerate(quality_docs, 1):
+                zipf.write(doc.path, f"5. Паспорта, сертификаты и лабораторные заключения/{i:03d}_{doc.filename}")
+
+
+def generate_registry_excel(project_id: int, output_path: str):
+    """
+    Генерирует реестр исполнительной документации в Excel
+    """
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, Border, Side
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Реестр ИД"
+
+    # Заголовок
+    ws.merge_cells('A1:G1')
+    ws['A1'] = "РЕЕСТР ИСПОЛНИТЕЛЬНОЙ ДОКУМЕНТАЦИИ"
+    ws['A1'].font = Font(bold=True, size=14)
+    ws['A1'].alignment = Alignment(horizontal='center')
+
+    # Заголовки таблицы
+    headers = ["№ п/п", "Наименование документа", "Содержание документа",
+               "№ документа", "Дата документа", "Кол-во листов", "Страница по списку"]
+
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(row=3, column=col)
+        cell.value = header
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal='center')
+
+    # Заполнение данных
+    # ... (код заполнения таблицы)
+
+    wb.save(output_path)
+
+
+def generate_aosr_excel(aosr: AOSRData, output_path: str):
+    """
+    Генерирует АОСР в формате Excel на основе шаблона
+
+    ВАЖНО: Генерация выполняется согласно регламенту:
+    docs/technical/info/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
+
+    Используется шаблон:
+    docs/technical/info/04_Форма АОСР.xlsx
+
+    Args:
+        aosr: Данные АОСР (номер, дата, объект, работы)
+        output_path: Путь для сохранения Excel файла
+    """
+    import openpyxl
+
+    # Загружаем шаблон из регламентирующих документов
+    template_path = "docs/technical/info/04_Форма АОСР.xlsx"
+    wb = openpyxl.load_workbook(template_path)
+    ws = wb.active
+
+    # Заполняем поля согласно регламенту
+    ws['B5'] = aosr.number
+    ws['E5'] = aosr.date.strftime("%d.%m.%Y")
+    ws['B10'] = aosr.work_description
+
+    wb.save(output_path)
 ```
+
+**Смотрите полную реализацию:** [architecture/10-final-package-generation.md](../architecture/10-final-package-generation.md)
 
 ---
 
@@ -390,6 +541,16 @@ aosr_template = """
 """
 
 def generate_aosr_from_template(data: dict, output_path: str):
+    """
+    Генерация АОСР из HTML шаблона
+
+    ВАЖНО: Генерация выполняется согласно регламенту:
+    docs/technical/info/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
+
+    Args:
+        data: Данные для заполнения шаблона (номер, дата, объект, работы)
+        output_path: Путь для сохранения PDF файла
+    """
     template = Template(aosr_template)
     html_content = template.render(**data)
 

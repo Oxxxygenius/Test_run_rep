@@ -352,15 +352,24 @@ class PackageCoordinator:
 ```python
 from typing import TypedDict, List
 
+from enum import Enum
+
+class PackageFormat(str, Enum):
+    """Формат формирования комплекта ИД"""
+    REPEATED_DOCS = "repeated"      # Вариант 1: документы к каждому АОСР
+    UNIFIED_DOCS = "unified"        # Вариант 2: со сквозной нумерацией
+
 class ProjectState(TypedDict):
     """Общее состояние проекта"""
     project_id: int
+    package_format: PackageFormat   # Формат комплекта (выбирается при создании проекта)
     documents: List[dict]           # Загруженные документы
     analyzed_works: List[dict]      # Проанализированные работы
     aosr_list: List[dict]           # Сгенерированные АОСР
     quality_docs: List[dict]        # Найденные документы качества
     validation_results: dict        # Результаты проверки
     final_package_path: str         # Путь к финальному PDF
+    final_archive_path: str         # Путь к архиву с редактируемыми файлами
 ```
 
 **Агенты читают и обновляют состояние:**
