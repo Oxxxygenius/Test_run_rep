@@ -106,7 +106,7 @@ def generate_aosr_pdf(data: dict, output_path: str):
     Генерация PDF акта АОСР
 
     ВАЖНО: Генерация выполняется согласно регламенту:
-    docs/technical/info/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
+    docs/technical/reference/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
 
     Регламент определяет:
     - Обязательные разделы и поля АОСР
@@ -454,10 +454,10 @@ def generate_aosr_excel(aosr: AOSRData, output_path: str):
     Генерирует АОСР в формате Excel на основе шаблона
 
     ВАЖНО: Генерация выполняется согласно регламенту:
-    docs/technical/info/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
+    docs/technical/reference/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
 
     Используется шаблон:
-    docs/technical/info/04_Форма АОСР.xlsx
+    docs/technical/reference/04_Форма АОСР.xlsx
 
     Args:
         aosr: Данные АОСР (номер, дата, объект, работы)
@@ -466,7 +466,7 @@ def generate_aosr_excel(aosr: AOSRData, output_path: str):
     import openpyxl
 
     # Загружаем шаблон из регламентирующих документов
-    template_path = "docs/technical/info/04_Форма АОСР.xlsx"
+    template_path = "docs/technical/reference/04_Форма АОСР.xlsx"
     wb = openpyxl.load_workbook(template_path)
     ws = wb.active
 
@@ -545,7 +545,7 @@ def generate_aosr_from_template(data: dict, output_path: str):
     Генерация АОСР из HTML шаблона
 
     ВАЖНО: Генерация выполняется согласно регламенту:
-    docs/technical/info/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
+    docs/technical/reference/02_Регламенты_Процессы/02_ТЗ на подготовку АОСР.xlsx
 
     Args:
         data: Данные для заполнения шаблона (номер, дата, объект, работы)

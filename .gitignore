@@ -1,5 +1,5 @@
 # Большие файлы примеров документации (только для локальной разработки)
-docs/technical/info/01_ИД_Примеры/
+docs/technical/reference/01_ИД_Примеры/
 
 # Python
 __pycache__/

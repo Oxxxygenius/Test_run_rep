@@ -193,7 +193,8 @@ pip install sqlalchemy asyncpg psycopg2-binary
 
 **Пример моделей:**
 ```python
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -211,7 +212,7 @@ class Project(Base):
     general_contractor = Column(String)  # Генподрядчик
     developer = Column(String)  # Застройщик
     package_format = Column(String, default="unified")  # Формат комплекта ИД: "repeated" или "unified"
-    custom_templates = Column(JSON)  # Пользовательские шаблоны для АОСР и реестров
+    custom_templates = Column(JSONB)  # Пользовательские шаблоны для АОСР и реестров (JSONB для PostgreSQL)
     created_at = Column(DateTime, default=datetime.utcnow)
     created_by = Column(Integer, ForeignKey("users.id"))
 
@@ -226,7 +227,7 @@ class Document(Base):
     filename = Column(String)
     doc_type = Column(String)  # сертификат, паспорт, декларация
     ocr_text = Column(String)
-    metadata = Column(JSON)  # реквизиты документа
+    metadata = Column(JSONB)  # реквизиты документа (JSONB для PostgreSQL)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship("Project", back_populates="documents")
@@ -237,7 +238,7 @@ class AOSR(Base):
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey("projects.id"))
     work_type = Column(String)
-    content = Column(JSON)  # структурированное содержимое акта
+    content = Column(JSONB)  # структурированное содержимое акта (JSONB для PostgreSQL)
     status = Column(String)  # draft, generated, approved
     created_at = Column(DateTime, default=datetime.utcnow)
 

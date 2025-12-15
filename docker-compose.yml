@@ -1,0 +1,142 @@
+version: '3.8'
+
+services:
+  # PostgreSQL База данных
+  postgres:
+    image: postgres:15-alpine
+    container_name: pto_postgres
+    environment:
+      POSTGRES_DB: pto_platform
+      POSTGRES_USER: pto_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pto_password_change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pto_user -d pto_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis для Celery и кеша
+  redis:
+    image: redis:7-alpine
+    container_name: pto_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend FastAPI
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pto_backend
+    environment:
+      - DATABASE_URL=postgresql://pto_user:${POSTGRES_PASSWORD:-pto_password_change_me}@postgres:5432/pto_platform
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SECRET_KEY=${SECRET_KEY:-dev_secret_key_change_in_production}
+      - ENVIRONMENT=development
+    volumes:
+      - ./backend:/app
+      - storage_data:/app/storage
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Celery Worker
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pto_celery_worker
+    environment:
+      - DATABASE_URL=postgresql://pto_user:${POSTGRES_PASSWORD:-pto_password_change_me}@postgres:5432/pto_platform
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SECRET_KEY=${SECRET_KEY:-dev_secret_key_change_in_production}
+      - ENVIRONMENT=development
+    volumes:
+      - ./backend:/app
+      - storage_data:/app/storage
+    depends_on:
+      - postgres
+      - redis
+      - backend
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=4
+
+  # Celery Beat (планировщик)
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pto_celery_beat
+    environment:
+      - DATABASE_URL=postgresql://pto_user:${POSTGRES_PASSWORD:-pto_password_change_me}@postgres:5432/pto_platform
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SECRET_KEY=${SECRET_KEY:-dev_secret_key_change_in_production}
+      - ENVIRONMENT=development
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+      - redis
+      - backend
+    command: celery -A app.celery_app beat --loglevel=info
+
+  # Flower (мониторинг Celery)
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pto_flower
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+      - celery-worker
+    command: celery -A app.celery_app flower --port=5555
+
+  # Frontend React
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: pto_frontend
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000/api/v1
+      - REACT_APP_WS_URL=ws://localhost:8000/ws
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    command: npm start
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  storage_data:
+    driver: local
