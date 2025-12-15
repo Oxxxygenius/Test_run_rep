@@ -31,8 +31,6 @@ docs/technical/
 | [04-scaling-strategy.md](architecture/04-scaling-strategy.md) | Стратегия масштабирования |
 | [05-quality-docs-search.md](architecture/05-quality-docs-search.md) | Поиск документов качества |
 | [06-user-actions-breakdown.md](architecture/06-user-actions-breakdown.md) | Детальная разбивка действий пользователя |
-| [07-aosr-generation-logic.md](architecture/07-aosr-generation-logic.md) | Логика генерации АОСР |
-| [08-templates-selection.md](architecture/08-templates-selection.md) | Выбор шаблонов документов |
 | [09-document-priorities-dependencies.md](architecture/09-document-priorities-dependencies.md) | Приоритеты и зависимости документов |
 | [10-final-package-generation.md](architecture/10-final-package-generation.md) | Генерация финального комплекта ИД |
 | [11-database-schema.md](architecture/11-database-schema.md) | Схема базы данных |
